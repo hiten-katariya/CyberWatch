@@ -1,0 +1,139 @@
+version: '3.8'
+
+networks:
+  lab-net:
+    driver: bridge
+    internal: false
+
+services:
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: sih-kafka
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    networks:
+      - lab-net
+    environment:
+      - KAFKA_NODE_ID=0
+      - KAFKA_PROCESS_ROLES=controller,broker
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: sih-timescaledb
+    ports:
+      - "5432:5432"
+    networks:
+      - lab-net
+    environment:
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD:-threatpipe}
+      - POSTGRES_DB=${DATABASE_NAME:-threatpipe}
+      - POSTGRES_USER=${DATABASE_USER:-postgres}
+
+  zeek:
+    image: zeek/zeek:6.2.0
+    container_name: sih-zeek
+    networks:
+      - lab-net
+    volumes:
+      - ./generator:/pcaps
+      - ./sensor/logs:/logs
+    working_dir: /logs
+    entrypoint: tail -f /dev/null
+
+  ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: sih-ingest
+    command: python ingest/producer.py
+    networks:
+      - lab-net
+    volumes:
+      - ./sensor/logs:/app/sensor/logs
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - KAFKA_TOPIC_CONN=events.conn
+      - KAFKA_TOPIC_DNS=events.dns
+      - KAFKA_TOPIC_TLS=events.tls
+      - ZEEK_LOG_DIR=/app/sensor/logs
+    depends_on:
+      - kafka
+
+  placeholder-detector:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: sih-placeholder-detector
+    command: python pipeline/detectors/placeholder.py
+    networks:
+      - lab-net
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - KAFKA_TOPIC_CONN=events.conn
+      - KAFKA_TOPIC_ALERTS=alerts
+    depends_on:
+      - kafka
+
+  alert-sink:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: sih-alert-sink
+    command: python pipeline/alerts/sink.py
+    networks:
+      - lab-net
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - KAFKA_TOPIC_ALERTS=alerts
+      - DATABASE_HOST=timescaledb
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=threatpipe
+      - DATABASE_USER=postgres
+      - DATABASE_PASSWORD=threatpipe
+    depends_on:
+      - kafka
+      - timescaledb
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: sih-api
+    command: python api/main.py
+    ports:
+      - "8000:8000"
+    networks:
+      - lab-net
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - KAFKA_TOPIC_ALERTS=alerts
+      - DATABASE_HOST=timescaledb
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=threatpipe
+      - DATABASE_USER=postgres
+      - DATABASE_PASSWORD=threatpipe
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+    depends_on:
+      - kafka
+      - timescaledb
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    container_name: sih-dashboard
+    ports:
+      - "3000:3000"
+    networks:
+      - lab-net
+    depends_on:
+      - api

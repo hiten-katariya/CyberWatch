@@ -1,0 +1,55 @@
+# Passive Threat Detection Platform — Detector Configuration
+
+recon:
+  window_seconds: 10
+  dst_port_fanout_threshold: 15
+  dst_host_fanout_threshold: 10
+  severity: medium
+  confidence: 0.90
+
+ddos:
+  volumetric_syn_threshold_pps: 100
+  volumetric_udp_threshold_pps: 100
+  slow_exhaustion_duration_min: 300
+  slow_exhaustion_max_bytes: 500
+  syn_ack_ratio_min: 5.0
+  severity: critical
+  confidence: 0.95
+
+dga:
+  domain_length_threshold: 22
+  entropy_threshold: 3.8
+  ngram_score_threshold: 0.25
+  severity: high
+  confidence: 0.88
+
+dns_tunnel:
+  query_length_threshold: 50
+  label_length_threshold: 30
+  query_entropy_threshold: 3.9
+  suspicious_qtypes: ["TXT", "NULL", "ANY"]
+  severity: high
+  confidence: 0.92
+
+c2_beacon:
+  min_repetition_count: 5
+  max_coefficient_of_variation: 0.15
+  min_mean_interval_sec: 5.0
+  max_mean_interval_sec: 3600.0
+  severity: critical
+  confidence: 0.91
+
+encrypted_malware:
+  ja3_blocklist:
+    - "e7d705a3286e19ea42f587b344ee6865"
+    - "6732f5ee9e07214161014cc672c9775f"
+    - "ada301376e18c44be079577c21c4f4a6"
+  severity: high
+  confidence: 0.95
+
+exfiltration:
+  byte_ratio_threshold: 10.0
+  min_outbound_bytes: 1000000
+  window_seconds: 60
+  severity: high
+  confidence: 0.89
