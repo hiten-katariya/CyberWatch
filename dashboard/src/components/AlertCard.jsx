@@ -1,42 +1,45 @@
 import React from 'react';
+import SeverityBadge from './ui/SeverityBadge';
 
 export default function AlertCard({ alert, isSelected, onSelect }) {
   const sev = alert.severity || 'low';
   const threat = (alert.threat_class || 'unknown').toUpperCase();
-  const pattern = alert.evidence?.pattern || '';
+  const pattern = alert.evidence?.pattern || 'Anomaly';
+  const timeAgo = Math.max(0, Math.round((new Date() - new Date(alert.timestamp)) / 1000));
+  const timeStr = timeAgo < 60 ? `${timeAgo}s ago` : `${Math.round(timeAgo / 60)}m ago`;
 
   return (
     <div 
       className={`alert-card ${isSelected ? 'selected' : ''}`} 
       onClick={() => onSelect(alert)}
-      style={{ cursor: 'pointer' }}
     >
       <div className={`sev-bar ${sev}`} />
       <div className="alert-body">
         <div className="alert-top">
-          <span className="threat-tag">
-            {threat} · {sev.toUpperCase()} ({(alert.confidence * 100).toFixed(0)}% CONF)
-          </span>
-          <span className="timestamp mono">
-            {new Date(alert.timestamp).toLocaleTimeString()}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <SeverityBadge severity={sev} />
+            <span className="threat-tag mono">{threat}</span>
+          </div>
+          <span className="timestamp mono">{timeStr}</span>
         </div>
 
         <div className="flow-info mono">
           <span>{alert.flow_identifier?.src_ip}:{alert.flow_identifier?.src_port}</span>
-          <span style={{ color: 'var(--text-secondary)' }}>→</span>
+          <span style={{ color: 'var(--text-secondary)' }}>─────────→</span>
           <span>{alert.flow_identifier?.dst_ip}:{alert.flow_identifier?.dst_port}</span>
-          <span style={{ fontSize: 12, color: 'var(--accent-primary)', marginLeft: 8 }}>
-            [{alert.flow_identifier?.proto?.toUpperCase()}]
-          </span>
+          <span className="proto-pill">[{alert.flow_identifier?.proto?.toUpperCase()}]</span>
         </div>
 
-        <div className="evidence-box">
-          <strong>Pattern:</strong> {pattern || 'Generic Anomaly'} | {JSON.stringify(alert.evidence)}
+        <div className="evidence-summary mono">
+          <strong>Pattern:</strong> {pattern} | {JSON.stringify(alert.evidence)}
         </div>
 
-        <div className="alert-id mono">
-          ALERT ID: {alert.alert_id} | SENSOR: {alert.sensor_id}
+        <div className="alert-meta mono">
+          <span>Confidence: {(alert.confidence * 100).toFixed(0)}%</span>
+          <span>•</span>
+          <span>Sensor: {alert.sensor_id}</span>
+          <span>•</span>
+          <span>ID: {alert.alert_id?.substring(0, 8)}...</span>
         </div>
       </div>
     </div>

@@ -1,17 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Header from './components/Header';
-import AlertSummary from './components/AlertSummary';
-import ThreatFilter from './components/ThreatFilter';
-import LiveFeed from './components/LiveFeed';
-import AlertDetails from './components/AlertDetails';
-import ThreatDistribution from './components/ThreatDistribution';
-import AlertTimeline from './components/AlertTimeline';
+import Sidebar from './components/Sidebar';
+import OverviewView from './views/OverviewView';
+import LiveAlertsView from './views/LiveAlertsView';
+import DetectorsView from './views/DetectorsView';
+import IntelligenceView from './views/IntelligenceView';
+import SystemHealthView from './views/SystemHealthView';
 
 export default function App() {
+  const [activeView, setActiveView] = useState('overview');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [alerts, setAlerts] = useState([]);
   const [stats, setStats] = useState({ total: 0, critical: 0, high: 0, medium: 0, low: 0, by_threat: {} });
   const [selectedFilter, setSelectedFilter] = useState('All');
   const [selectedAlert, setSelectedAlert] = useState(null);
+  const [globalSearch, setGlobalSearch] = useState('');
   const [connectionStatus, setConnectionStatus] = useState('connecting');
 
   const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
@@ -30,7 +33,7 @@ export default function App() {
   };
 
   const fetchAlerts = () => {
-    fetch(`${API_BASE}/alerts`)
+    fetch(`${API_BASE}/alerts?limit=200`)
       .then(res => res.json())
       .then(data => { if (data && data.alerts) setAlerts(data.alerts); })
       .catch(err => console.error("Alerts fetch error:", err));
@@ -56,7 +59,7 @@ export default function App() {
       ws.onmessage = (event) => {
         try {
           const newAlert = JSON.parse(event.data);
-          setAlerts(prev => [newAlert, ...prev]);
+          setAlerts(prev => [newAlert, ...prev.slice(0, 300)]);
           fetchStats();
         } catch (e) {}
       };
@@ -79,44 +82,82 @@ export default function App() {
     };
   }, [WS_URL]);
 
-  const filteredAlerts = alerts.filter(a => {
-    if (selectedFilter === 'All') return true;
-    return a.threat_class === selectedFilter;
-  });
+  const filteredAlerts = useMemo(() => {
+    return alerts.filter(a => {
+      if (selectedFilter !== 'All' && a.threat_class !== selectedFilter) {
+        return false;
+      }
+      if (globalSearch.trim() !== '') {
+        const q = globalSearch.toLowerCase();
+        const src = a.flow_identifier?.src_ip || '';
+        const dst = a.flow_identifier?.dst_ip || '';
+        const id = a.alert_id || '';
+        const threat = a.threat_class || '';
+        const ev = JSON.stringify(a.evidence || {});
+        return src.toLowerCase().includes(q) || 
+               dst.toLowerCase().includes(q) || 
+               id.toLowerCase().includes(q) || 
+               threat.toLowerCase().includes(q) ||
+               ev.toLowerCase().includes(q);
+      }
+      return true;
+    });
+  }, [alerts, selectedFilter, globalSearch]);
+
+  const renderActiveView = () => {
+    switch (activeView) {
+      case 'overview':
+        return (
+          <OverviewView 
+            alerts={filteredAlerts}
+            stats={stats}
+            selectedFilter={selectedFilter}
+            onSelectFilter={setSelectedFilter}
+            selectedAlert={selectedAlert}
+            onSelectAlert={setSelectedAlert}
+          />
+        );
+      case 'live_alerts':
+        return (
+          <LiveAlertsView 
+            alerts={filteredAlerts}
+            selectedFilter={selectedFilter}
+            onSelectFilter={setSelectedFilter}
+            selectedAlert={selectedAlert}
+            onSelectAlert={setSelectedAlert}
+          />
+        );
+      case 'detectors':
+        return <DetectorsView byThreat={stats.by_threat} />;
+      case 'intelligence':
+        return <IntelligenceView />;
+      case 'system_health':
+        return <SystemHealthView connectionStatus={connectionStatus} />;
+      default:
+        return null;
+    }
+  };
 
   return (
-    <div className="app-container">
-      <Header connectionStatus={connectionStatus} />
-
-      <main className="content">
-        <AlertSummary stats={stats} />
-
-        <ThreatFilter 
-          selectedFilter={selectedFilter} 
-          onSelectFilter={setSelectedFilter} 
+    <div className="app-shell">
+      <Header 
+        connectionStatus={connectionStatus} 
+        globalSearch={globalSearch}
+        onSearchChange={setGlobalSearch}
+      />
+      
+      <div className="shell-body">
+        <Sidebar 
+          activeView={activeView}
+          onViewChange={setActiveView}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         />
 
-        <div style={{ display: 'grid', gridTemplateColumns: '65% 35%', gap: 20 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            <LiveFeed 
-              alerts={filteredAlerts}
-              selectedAlert={selectedAlert}
-              onSelectAlert={setSelectedAlert}
-            />
-
-            <AlertTimeline alerts={alerts} />
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            <AlertDetails 
-              alert={selectedAlert} 
-              onClose={() => setSelectedAlert(null)}
-            />
-
-            <ThreatDistribution byThreat={stats.by_threat} />
-          </div>
-        </div>
-      </main>
+        <main className="main-content">
+          {renderActiveView()}
+        </main>
+      </div>
     </div>
   );
 }
