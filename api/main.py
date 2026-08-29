@@ -27,7 +27,6 @@ DB_NAME = os.getenv("DATABASE_NAME", "threatpipe")
 DB_USER = os.getenv("DATABASE_USER", "postgres")
 DB_PASSWORD = os.getenv("DATABASE_PASSWORD", "threatpipe")
 
-# WebSocket Connection Manager
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
@@ -38,14 +37,15 @@ class ConnectionManager:
         logger.info(f"WebSocket client connected. Active connections: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-        logger.info(f"WebSocket client disconnected. Active connections: {len(self.active_connections)}")
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+            logger.info(f"WebSocket client disconnected. Active connections: {len(self.active_connections)}")
 
     async def broadcast(self, message: dict):
         if not self.active_connections:
             return
         dead_connections = set()
-        for connection in self.active_connections:
+        for connection in list(self.active_connections):
             try:
                 await connection.send_json(message)
             except Exception as e:
@@ -70,7 +70,6 @@ def get_db_connection():
         logger.error(f"Failed to connect to Database: {e}")
         return None
 
-# Background Task: Kafka Consumer for WebSocket Broadcasting
 async def kafka_alert_listener():
     logger.info(f"Starting Kafka alert listener for WebSocket broadcast on topic '{KAFKA_TOPIC_ALERTS}'")
     while True:
@@ -85,33 +84,29 @@ async def kafka_alert_listener():
             logger.info("Kafka consumer connected for WebSocket streaming.")
             loop = asyncio.get_event_loop()
             
-            # Poll loop
             while True:
-                # Use run_in_executor to avoid blocking the asyncio event loop
-                records = await loop.run_in_executor(None, consumer.poll, 1000)
+                records = await loop.run_in_executor(None, consumer.poll, 500)
                 for topic_partition, messages in records.items():
                     for msg in messages:
                         alert = msg.value
-                        logger.info(f"API received alert for WS broadcast: {alert.get('alert_id')}")
+                        logger.info(f"API broadcasting live alert over WS: {alert.get('alert_id')}")
                         await manager.broadcast(alert)
                 await asyncio.sleep(0.1)
         except Exception as e:
-            logger.warning(f"Kafka consumer connection issue in API: {e}. Reconnecting in 3s...")
+            logger.warning(f"Kafka consumer issue in API: {e}. Reconnecting in 3s...")
             await asyncio.sleep(3)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     logger.info("FastAPI Backend starting up...")
     listener_task = asyncio.create_task(kafka_alert_listener())
     yield
-    # Shutdown
     listener_task.cancel()
     logger.info("FastAPI Backend shutting down...")
 
 app = FastAPI(
     title="Passive Threat Detection Platform API",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -148,7 +143,7 @@ def health_check():
     }
 
 @app.get("/alerts")
-def get_alerts(limit: int = 50):
+def get_alerts(limit: int = 100):
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -156,7 +151,6 @@ def get_alerts(limit: int = 50):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM alerts ORDER BY timestamp DESC LIMIT %s;", (limit,))
             rows = cur.fetchall()
-            # Format row data for JSON response
             alerts = []
             for row in rows:
                 row["alert_id"] = str(row["alert_id"])
@@ -171,13 +165,72 @@ def get_alerts(limit: int = 50):
     finally:
         conn.close()
 
+@app.get("/alerts/stats")
+def get_alert_stats():
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT count(*) as total FROM alerts;")
+            total = cur.fetchone()["total"]
+
+            cur.execute("SELECT severity, count(*) as count FROM alerts GROUP BY severity;")
+            sev_rows = cur.fetchall()
+            sev_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+            for r in sev_rows:
+                s = str(r["severity"]).lower()
+                if s in sev_counts:
+                    sev_counts[s] = r["count"]
+
+            cur.execute("SELECT threat_class, count(*) as count FROM alerts GROUP BY threat_class;")
+            threat_rows = cur.fetchall()
+            by_threat = {r["threat_class"]: r["count"] for r in threat_rows}
+
+            return {
+                "total": total,
+                "critical": sev_counts["critical"],
+                "high": sev_counts["high"],
+                "medium": sev_counts["medium"],
+                "low": sev_counts["low"],
+                "by_threat": by_threat
+            }
+    except Exception as e:
+        logger.error(f"Error fetching alert stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@app.get("/alerts/{alert_id}")
+def get_alert_by_id(alert_id: str):
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM alerts WHERE alert_id = %s;", (alert_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Alert not found")
+            row["alert_id"] = str(row["alert_id"])
+            row["timestamp"] = row["timestamp"].isoformat()
+            if "created_at" in row and row["created_at"]:
+                row["created_at"] = row["created_at"].isoformat()
+            return row
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching alert by ID: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
 @app.websocket("/ws/alerts")
 async def websocket_alerts(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            # Keep socket alive / receive ping frames
-            data = await websocket.receive_text()
+            await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:

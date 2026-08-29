@@ -6,7 +6,10 @@ import uuid
 import logging
 from datetime import datetime, timezone
 from kafka import KafkaConsumer, KafkaProducer
-from pipeline.detectors.config_loader import load_detector_config
+try:
+    from pipeline.detectors.config_loader import load_detector_config
+except ModuleNotFoundError:
+    from config_loader import load_detector_config
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 logger = logging.getLogger("exfiltration-detector")

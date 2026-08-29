@@ -60,25 +60,111 @@ services:
       - ./sensor/logs:/app/sensor/logs
     environment:
       - KAFKA_BROKER=kafka:9092
-      - KAFKA_TOPIC_CONN=events.conn
-      - KAFKA_TOPIC_DNS=events.dns
-      - KAFKA_TOPIC_TLS=events.tls
       - ZEEK_LOG_DIR=/app/sensor/logs
     depends_on:
       - kafka
 
-  placeholder-detector:
+  feature-extractor:
     build:
       context: .
       dockerfile: Dockerfile.python
-    container_name: sih-placeholder-detector
-    command: python pipeline/detectors/placeholder.py
+    container_name: sih-feature-extractor
+    command: python pipeline/features/extractor.py
     networks:
       - lab-net
     environment:
       - KAFKA_BROKER=kafka:9092
-      - KAFKA_TOPIC_CONN=events.conn
-      - KAFKA_TOPIC_ALERTS=alerts
+    depends_on:
+      - kafka
+
+  detector-recon:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: sih-detector-recon
+    command: python pipeline/detectors/recon.py
+    networks:
+      - lab-net
+    environment:
+      - KAFKA_BROKER=kafka:9092
+    depends_on:
+      - kafka
+
+  detector-ddos:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: sih-detector-ddos
+    command: python pipeline/detectors/ddos.py
+    networks:
+      - lab-net
+    environment:
+      - KAFKA_BROKER=kafka:9092
+    depends_on:
+      - kafka
+
+  detector-dga:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: sih-detector-dga
+    command: python pipeline/detectors/dga.py
+    networks:
+      - lab-net
+    environment:
+      - KAFKA_BROKER=kafka:9092
+    depends_on:
+      - kafka
+
+  detector-dns-tunnel:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: sih-detector-dns-tunnel
+    command: python pipeline/detectors/dns_tunnel.py
+    networks:
+      - lab-net
+    environment:
+      - KAFKA_BROKER=kafka:9092
+    depends_on:
+      - kafka
+
+  detector-c2-beacon:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: sih-detector-c2-beacon
+    command: python pipeline/detectors/c2_beacon.py
+    networks:
+      - lab-net
+    environment:
+      - KAFKA_BROKER=kafka:9092
+    depends_on:
+      - kafka
+
+  detector-encrypted-malware:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: sih-detector-encrypted-malware
+    command: python pipeline/detectors/encrypted_malware.py
+    networks:
+      - lab-net
+    environment:
+      - KAFKA_BROKER=kafka:9092
+    depends_on:
+      - kafka
+
+  detector-exfiltration:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: sih-detector-exfiltration
+    command: python pipeline/detectors/exfiltration.py
+    networks:
+      - lab-net
+    environment:
+      - KAFKA_BROKER=kafka:9092
     depends_on:
       - kafka
 
@@ -92,7 +178,6 @@ services:
       - lab-net
     environment:
       - KAFKA_BROKER=kafka:9092
-      - KAFKA_TOPIC_ALERTS=alerts
       - DATABASE_HOST=timescaledb
       - DATABASE_PORT=5432
       - DATABASE_NAME=threatpipe
@@ -114,7 +199,6 @@ services:
       - lab-net
     environment:
       - KAFKA_BROKER=kafka:9092
-      - KAFKA_TOPIC_ALERTS=alerts
       - DATABASE_HOST=timescaledb
       - DATABASE_PORT=5432
       - DATABASE_NAME=threatpipe
@@ -137,3 +221,21 @@ services:
       - lab-net
     depends_on:
       - api
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: sih-grafana
+    ports:
+      - "3001:3000"
+    networks:
+      - lab-net
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - timescaledb

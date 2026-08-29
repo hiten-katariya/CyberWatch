@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: TimescaleDB
+    type: postgres
+    access: proxy
+    url: timescaledb:5432
+    database: threatpipe
+    user: postgres
+    secureJsonData:
+      password: threatpipe
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+      timescaleDB: true
+    isDefault: true

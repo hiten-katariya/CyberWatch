@@ -1,9 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Activity, Radio, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import Header from './components/Header';
+import AlertSummary from './components/AlertSummary';
+import ThreatFilter from './components/ThreatFilter';
+import LiveFeed from './components/LiveFeed';
+import AlertDetails from './components/AlertDetails';
+import ThreatDistribution from './components/ThreatDistribution';
+import AlertTimeline from './components/AlertTimeline';
 
 export default function App() {
   const [alerts, setAlerts] = useState([]);
+  const [stats, setStats] = useState({ total: 0, critical: 0, high: 0, medium: 0, low: 0, by_threat: {} });
+  const [selectedFilter, setSelectedFilter] = useState('All');
+  const [selectedAlert, setSelectedAlert] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
+
   const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
     ? 'http://localhost:8000' 
     : `http://${window.location.hostname}:8000`;
@@ -12,128 +22,100 @@ export default function App() {
     ? 'ws://localhost:8000/ws/alerts' 
     : `ws://${window.location.hostname}:8000/ws/alerts`;
 
-  // Fetch initial alerts
-  useEffect(() => {
+  const fetchStats = () => {
+    fetch(`${API_BASE}/alerts/stats`)
+      .then(res => res.json())
+      .then(data => { if (data) setStats(data); })
+      .catch(err => console.error("Stats fetch error:", err));
+  };
+
+  const fetchAlerts = () => {
     fetch(`${API_BASE}/alerts`)
       .then(res => res.json())
-      .then(data => {
-        if (data && data.alerts) {
-          setAlerts(data.alerts);
-        }
-      })
-      .catch(err => console.error("Initial alerts fetch error:", err));
+      .then(data => { if (data && data.alerts) setAlerts(data.alerts); })
+      .catch(err => console.error("Alerts fetch error:", err));
+  };
+
+  useEffect(() => {
+    fetchStats();
+    fetchAlerts();
   }, [API_BASE]);
 
-  // WebSocket Live Connection
   useEffect(() => {
     let ws = null;
-    let connectTimer = null;
+    let timer = null;
 
-    const connectWS = () => {
+    const connect = () => {
       setConnectionStatus('connecting');
       ws = new WebSocket(WS_URL);
 
       ws.onopen = () => {
-        console.log("WebSocket connected to", WS_URL);
         setConnectionStatus('live');
       };
 
       ws.onmessage = (event) => {
         try {
           const newAlert = JSON.parse(event.data);
-          console.log("Live WebSocket Alert Received:", newAlert);
           setAlerts(prev => [newAlert, ...prev]);
-        } catch (e) {
-          console.error("Error parsing WS message:", e);
-        }
+          fetchStats();
+        } catch (e) {}
       };
 
-      ws.onerror = (err) => {
-        console.warn("WebSocket error:", err);
+      ws.onerror = () => {
         setConnectionStatus('disconnected');
       };
 
       ws.onclose = () => {
-        console.warn("WebSocket disconnected. Reconnecting in 3s...");
         setConnectionStatus('disconnected');
-        connectTimer = setTimeout(connectWS, 3000);
+        timer = setTimeout(connect, 3000);
       };
     };
 
-    connectWS();
+    connect();
 
     return () => {
       if (ws) ws.close();
-      if (connectTimer) clearTimeout(connectTimer);
+      if (timer) clearTimeout(timer);
     };
   }, [WS_URL]);
 
+  const filteredAlerts = alerts.filter(a => {
+    if (selectedFilter === 'All') return true;
+    return a.threat_class === selectedFilter;
+  });
+
   return (
     <div className="app-container">
-      {/* Top Navigation Bar */}
-      <header className="top-bar">
-        <div className="brand">
-          <Shield size={20} color="#3B82F6" />
-          <span className="brand-title">PASSIVE THREAT DETECTION PLATFORM</span>
-        </div>
+      <Header connectionStatus={connectionStatus} />
 
-        <div className="status-badge">
-          <span className={`dot ${connectionStatus}`}></span>
-          <span>{connectionStatus === 'live' ? 'LIVE WEBSOCKET' : connectionStatus.toUpperCase()}</span>
-        </div>
-      </header>
-
-      {/* Main Content Feed */}
       <main className="content">
-        <div className="feed-header">
-          <h2 className="section-title">Phase 1 Pipeline Alert Feed</h2>
-          <span className="alert-counter">Total Alerts: {alerts.length}</span>
+        <AlertSummary stats={stats} />
+
+        <ThreatFilter 
+          selectedFilter={selectedFilter} 
+          onSelectFilter={setSelectedFilter} 
+        />
+
+        <div style={{ display: 'grid', gridTemplateColumns: '65% 35%', gap: 20 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <LiveFeed 
+              alerts={filteredAlerts}
+              selectedAlert={selectedAlert}
+              onSelectAlert={setSelectedAlert}
+            />
+
+            <AlertTimeline alerts={alerts} />
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <AlertDetails 
+              alert={selectedAlert} 
+              onClose={() => setSelectedAlert(null)}
+            />
+
+            <ThreatDistribution byThreat={stats.by_threat} />
+          </div>
         </div>
-
-        {alerts.length === 0 ? (
-          <div className="empty-state">
-            <Radio size={32} style={{ marginBottom: 12, opacity: 0.5 }} />
-            <p>Waiting for Phase 1 benign traffic & placeholder alert...</p>
-            <p className="mono" style={{ fontSize: 12, marginTop: 8 }}>
-              Run iperf3 generator → Zeek → Kafka → Placeholder Detector → Alert Sink
-            </p>
-          </div>
-        ) : (
-          <div className="alert-list">
-            {alerts.map((alert, idx) => (
-              <div key={alert.alert_id || idx} className="alert-card">
-                <div className={`sev-bar ${alert.severity || 'low'}`} />
-                <div className="alert-body">
-                  <div className="alert-top">
-                    <span className="threat-tag">
-                      {alert.threat_class} · {alert.severity} ({(alert.confidence * 100).toFixed(0)}% CONF)
-                    </span>
-                    <span className="timestamp mono">
-                      {new Date(alert.timestamp).toLocaleTimeString()}
-                    </span>
-                  </div>
-
-                  <div className="flow-info mono">
-                    <span>{alert.flow_identifier?.src_ip}:{alert.flow_identifier?.src_port}</span>
-                    <span style={{ color: 'var(--text-secondary)' }}>→</span>
-                    <span>{alert.flow_identifier?.dst_ip}:{alert.flow_identifier?.dst_port}</span>
-                    <span style={{ fontSize: 12, color: 'var(--accent-primary)', marginLeft: 8 }}>
-                      [{alert.flow_identifier?.proto?.toUpperCase()}]
-                    </span>
-                  </div>
-
-                  <div className="evidence-box">
-                    <strong>Evidence:</strong> {alert.evidence?.message || JSON.stringify(alert.evidence)}
-                  </div>
-
-                  <div className="alert-id mono">
-                    ALERT ID: {alert.alert_id} | SENSOR: {alert.sensor_id}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </main>
     </div>
   );
