@@ -118,17 +118,7 @@ python -m pytest tests/
 
 ---
 
-## 6. Stopping the Environment
-
-To stop and remove containers and network:
-
-```bash
-docker compose down
-```
-
----
-
-## 7. Troubleshooting
+## 6. Troubleshooting
 
 - **Check logs of a service**:
   ```bash
